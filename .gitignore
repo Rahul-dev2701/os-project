@@ -1,0 +1,18 @@
+# xv6 build artifacts
+*.o
+*.d
+*.sym
+xv6-public/kernel
+xv6-public/xv6.img
+xv6-public/fs.img
+
+# Debugging artifacts
+core
+core.*
+*.core
+
+# Editor files
+.vscode/
+.idea/
+*~
+*.swp
