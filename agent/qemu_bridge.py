@@ -1,64 +1,145 @@
 import socket
-import sys
 import threading
+import time
 
-# Match the IP and port defined in your Makefile
-HOST = '127.0.0.1'
-PORT = 5555
 
-def receive_from_xv6(sock):
-    """Continuously reads output from xv6 and prints it to the Ubuntu terminal."""
-    while True:
+class QemuBridge:
+    """Restricted tool bridge to a running x86 xv6 guest."""
+
+    HOST = "127.0.0.1"
+    PORT = 5555
+    TIMEOUT = 5.0
+    MAX_RESPONSE = 65536
+    PROMPT = b"$ "
+
+    # Guest paths accepted by this prototype.
+    ALLOWED_FILES = {
+        "report.txt": "report.txt",
+        "important.txt": "important.txt",
+        "inbox.txt": "inbox.txt",
+    }
+
+    def __init__(self, host=HOST, port=PORT, timeout=TIMEOUT):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.sock = None
+        self.buffer = bytearray()
+        self.lock = threading.Lock()
+        self.ready = False
+
+    def connect(self):
+        if self.sock is not None:
+            return
+
+        self.sock = socket.create_connection(
+            (self.host, self.port),
+            timeout=self.timeout,
+        )
+        self.sock.settimeout(self.timeout)
+
         try:
-            data = sock.recv(1024)
-            if not data:
-                print("\n[Bridge] Connection closed by xv6.")
-                break
-            # Decode and print raw characters from the serial console
-            sys.stdout.write(data.decode('utf-8', errors='ignore'))
-            sys.stdout.flush()
-        except Exception as e:
-            print(f"\n[Bridge] Error receiving: {e}")
-            break
+            # Serial output produced before the TCP connection may
+            # have been lost. Request a fresh shell prompt.
+            self.sock.sendall(b"\n")
+            output = self._read_until_prompt()
 
-def main():
-    print(f"[Bridge] Connecting to xv6 at {HOST}:{PORT}...")
-    
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((HOST, PORT))
-        print("[Bridge] Connected successfully! (Press Ctrl+C to exit)\n")
-    except ConnectionRefusedError:
-        print("[Bridge] Connection failed. Is xv6 running via 'make qemu-agent'?")
-        return
+            print("[Bridge] Initial guest response:", repr(output))
+            self.ready = True
 
-    # Start a background thread to listen to xv6 output
-    rx_thread = threading.Thread(target=receive_from_xv6, args=(sock,), daemon=True)
-    rx_thread.start()
+        except Exception:
+            self.close()
+            raise
 
-    # Main loop reads inputs from Ubuntu terminal and sends them to xv6
-    try:
-        while True:
-            
-            # Read character inputs or commands
-            #user_input = input()
-            # Append a newline so xv6 executes the command
-            #sock.sendall((user_input + '\n').encode('utf-8'))
-            
-            import time
+    def close(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            finally:
+                self.sock = None
 
-            # Wait for boot to finish
-            time.sleep(2) 
+        self.ready = False
+        self.buffer.clear()
 
-            # Programmatically run the 'ls' command in xv6
-            sock.sendall(b"ls\n") 
+    def _read_until_prompt(self):
+        deadline = time.monotonic() + self.timeout
 
-            
-    except KeyboardInterrupt:
-        print("\n[Bridge] Exiting bridge script.")
-    finally:
-        sock.close()
+        while time.monotonic() < deadline:
+            index = self.buffer.find(self.PROMPT)
 
-if __name__ == '__main__':
-    main()
+            if index >= 0:
+                output = bytes(self.buffer[:index])
+                del self.buffer[:index + len(self.PROMPT)]
+                return output.decode("utf-8", errors="replace")
 
+            if len(self.buffer) > self.MAX_RESPONSE:
+                raise RuntimeError("Guest response exceeded size limit")
+
+            remaining = deadline - time.monotonic()
+            self.sock.settimeout(max(0.05, remaining))
+
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout as exc:
+                received = bytes(self.buffer).decode(
+                    "utf-8", errors="replace"
+                )
+                raise TimeoutError(
+                    "Timed out waiting for xv6 prompt. "
+                    f"Received so far: {received!r}"
+                ) from exc
+
+            if not chunk:
+                raise RuntimeError("QEMU closed the serial connection")
+
+            self.buffer.extend(chunk)
+
+        received = bytes(self.buffer).decode("utf-8", errors="replace")
+        raise TimeoutError(
+            f"Timed out waiting for xv6 prompt. Received: {received!r}"
+        )
+
+    def _run_fixed_command(self, command):
+        if not self.ready or self.sock is None:
+            raise RuntimeError("Bridge is not connected")
+
+        # Commands are constructed internally, never supplied directly
+        # by the agent or user.
+        if "\n" in command or "\r" in command:
+            raise ValueError("Invalid command")
+
+        self.sock.sendall(command.encode("ascii") + b"\n")
+        output = self._read_until_prompt()
+
+        # Remove the echoed command if xv6 echoed it.
+        lines = output.replace("\r", "").splitlines()
+
+        if lines and lines[0].strip() == command:
+            lines = lines[1:]
+
+        return "\n".join(lines).strip()
+
+    def execute(self, tool, path=None):
+        with self.lock:
+            if self.sock is None:
+                self.connect()
+
+            if tool == "list_files":
+                if path is not None:
+                    raise ValueError("list_files accepts no path")
+                return self._run_fixed_command("ls")
+
+            if tool == "read_file":
+                if not isinstance(path, str):
+                    raise ValueError("Path must be a string")
+
+                # Accept either "report.txt" or "/report.txt".
+                normalized = path.lstrip("/")
+
+                if normalized not in self.ALLOWED_FILES:
+                    raise ValueError("File path is not allowed")
+
+                filename = self.ALLOWED_FILES[normalized]
+                return self._run_fixed_command("cat " + filename)
+
+            raise ValueError(f"Unsupported tool: {tool}")
