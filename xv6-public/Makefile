@@ -231,6 +231,14 @@ qemu-memfs: xv6memfs.img
 qemu-nox: fs.img xv6.img
 	$(QEMU) -nographic $(QEMUOPTS)
 
+#Project Code Step 1 Bridge Change made in MakeFile
+# Start xv6 with its serial console exposed to the Python bridge.
+qemu-agent: fs.img xv6.img
+	$(QEMU) -display none \
+		-serial tcp:127.0.0.1:5555,server=on,wait=off \
+		-monitor none $(QEMUOPTS)
+#-------------------------------------------------------------------------
+
 .gdbinit: .gdbinit.tmpl
 	sed "s/localhost:1234/localhost:$(GDBPORT)/" < $^ > $@
 
