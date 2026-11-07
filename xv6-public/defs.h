@@ -22,6 +22,10 @@ void            cprintf(char*, ...);
 void            consoleintr(int(*)(void));
 void            panic(char*) __attribute__((noreturn));
 
+// effect.c
+int             effect_lookup(int, unsigned long long, int*, uint*);
+int             effect_insert(int, unsigned long long, int, uint);
+
 // exec.c
 int             exec(char*, char**);
 

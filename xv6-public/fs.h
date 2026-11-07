@@ -4,6 +4,7 @@
 
 #define ROOTINO 1  // root i-number
 #define BSIZE 512  // block size
+#define EFFECTBLOCKS 2 // Effect table capacity: 64 records
 
 // Disk layout:
 // [ boot block | super block | log | inode blocks |
@@ -19,6 +20,8 @@ struct superblock {
   uint logstart;     // Block number of first log block
   uint inodestart;   // Block number of first inode block
   uint bmapstart;    // Block number of first free map block
+  uint effectstart;  // First block reserved for effect records
+  uint neffectblocks;// Number of reserved effect-table blocks
 };
 
 #define NDIRECT 12
@@ -55,3 +58,10 @@ struct dirent {
   char name[DIRSIZ];
 };
 
+
+// Persistent effect record. key 0 means an unused slot.
+struct effect_record {
+  unsigned long long key;
+  int result;
+  uint request_hash;
+};
