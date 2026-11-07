@@ -1649,6 +1649,7 @@ fsfull()
 {
   int nfiles;
   int fsblocks = 0;
+  (void)fsblocks;
 
   printf(1, "fsfull test\n");
 
