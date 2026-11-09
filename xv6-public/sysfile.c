@@ -282,6 +282,97 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+// Apply an idempotent filesystem change and persist its effect record
+// in ONE log transaction. The caller validates user pointers and computes
+// request_hash from op, path, payload, and length.
+// CREATE uses O_CREATE semantics: an existing regular file is accepted.
+// APPEND requires an existing regular file and <= EFFECT_MAX_APPEND bytes.
+// Return: stored result (>= 0), -1 invalid/failure, -2 key hash conflict.
+int effect_apply(unsigned long long key, int op, char *path,
+                 char *buf, int n, uint request_hash) {
+    struct inode *ip;
+    int old_result = 0;
+    uint old_hash = 0;
+    int found, result;
+
+    if(key == 0 || path == 0 || path[0] == 0) {
+        return -1;
+    }
+    if(op == EFFECT_OP_CREATE) {
+        if(n != 0) {
+            return -1;
+        }
+    } else if(op == EFFECT_OP_APPEND) {
+        if(buf == 0 || n <= 0 || n > EFFECT_MAX_APPEND) {
+            return -1;
+        }
+    } else {
+        return -1;
+    }
+
+    effect_lock();
+    found = effect_lookup(ROOTDEV, key, &old_result, &old_hash);
+    if(found == 1) {
+        effect_unlock();
+        if(old_hash != request_hash) {
+            return -2;
+        }
+        return old_result;
+    }
+    if(found != 0) {
+        effect_unlock();
+        return -1;
+    }
+
+    begin_op();
+    if(op == EFFECT_OP_CREATE) {
+        ip = create(path, T_FILE, 0, 0);
+        if(ip == 0) {
+            end_op();
+            effect_unlock();
+            return -1;
+        }
+        if(ip->dev != ROOTDEV || ip->type != T_FILE) {
+            iunlockput(ip);
+            end_op();
+            effect_unlock();
+            return -1;
+        }
+        result = 0;
+    } else {
+        ip = namei(path);
+        if(ip == 0) {
+            end_op();
+            effect_unlock();
+            return -1;
+        }
+        ilock(ip);
+        if(ip->dev != ROOTDEV || ip->type != T_FILE ||
+           ip->size > MAXFILE*BSIZE - n) {
+            iunlockput(ip);
+            end_op();
+            effect_unlock();
+            return -1;
+        }
+        result = writei(ip, buf, ip->size, n);
+        if(result != n) {
+            // writei() can already have logged changes. Do not claim
+            // an atomic failure or record a failed operation.
+            panic("effect_apply: unexpected short write");
+        }
+    }
+
+    // effect_lookup() established an empty slot while effectlock was held.
+    // Failing here after modifying a file must not silently commit it.
+    if(effect_insert(ROOTDEV, key, result, request_hash) != 0) {
+        panic("effect_apply: effect insert failed");
+    }
+    iunlockput(ip);
+    end_op();
+    effect_unlock();
+    return result;
+}
+
 int
 sys_open(void)
 {

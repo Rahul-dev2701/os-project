@@ -5,7 +5,22 @@
 #include "sleeplock.h"
 #include "buf.h"
 
-// Return 1 if found, 0 if absent, -1 for an invalid key/layout.
+static struct sleeplock effectlock;
+
+void effect_lock_init(void) {
+    initsleeplock(&effectlock, "effect");
+}
+
+void effect_lock(void) {
+    acquiresleep(&effectlock);
+}
+
+void effect_unlock(void) {
+    releasesleep(&effectlock);
+}
+
+// Return 1 if found, 0 if absent with space available,
+// -1 for invalid input, invalid layout, or a full table.
 int effect_lookup(int dev, unsigned long long key, int *result, uint *request_hash) {
   struct superblock s;
   struct effect_record *records;
@@ -41,7 +56,7 @@ int effect_lookup(int dev, unsigned long long key, int *result, uint *request_ha
     }
     brelse(bp);
   }
-  return 0;
+  return -1;
 }
 
 // Caller must be inside begin_op()/end_op() and protect against

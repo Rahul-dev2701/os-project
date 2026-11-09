@@ -5,6 +5,7 @@
 #include "mmu.h"
 #include "x86.h"
 #include "proc.h"
+#include "fs.h"
 #include "spinlock.h"
 
 struct {
@@ -400,13 +401,14 @@ forkret(void)
   // Still holding ptable.lock from scheduler.
   release(&ptable.lock);
 
-  if (first) {
+  if(first) {
     // Some initialization functions must be run in the context
     // of a regular process (e.g., they call sleep), and thus cannot
     // be run from main().
     first = 0;
     iinit(ROOTDEV);
     initlog(ROOTDEV);
+    effect_lock_init();
   }
 
   // Return to "caller", actually trapret (see allocproc).

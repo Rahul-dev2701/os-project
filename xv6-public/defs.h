@@ -25,6 +25,11 @@ void            panic(char*) __attribute__((noreturn));
 // effect.c
 int             effect_lookup(int, unsigned long long, int*, uint*);
 int             effect_insert(int, unsigned long long, int, uint);
+void effect_lock_init(void);
+void effect_lock(void);
+void effect_unlock(void);
+int effect_apply(unsigned long long key, int op, char *path, char *buf, int n, uint request_hash);
+
 
 // exec.c
 int             exec(char*, char**);

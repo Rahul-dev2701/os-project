@@ -6,6 +6,11 @@
 #define BSIZE 512  // block size
 #define EFFECTBLOCKS 2 // Effect table capacity: 64 records
 
+// Agreed operation numbers for the filesystem-side effect helper.
+#define EFFECT_OP_APPEND 1
+#define EFFECT_OP_CREATE 2
+#define EFFECT_MAX_APPEND 128
+
 // Disk layout:
 // [ boot block | super block | log | inode blocks |
 //                                          free bit map | data blocks]
