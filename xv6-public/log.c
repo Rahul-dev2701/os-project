@@ -50,6 +50,45 @@ struct log log;
 static void recover_from_log(void);
 static void commit();
 
+// Crash injection is disabled by default. The counter advances for each
+// log_write and at important boundaries in commit().
+static int crashpoint;
+static int crashcount;
+
+int
+crashat_set(int n)
+{
+    acquire(&log.lock);
+    crashpoint = n;
+    crashcount = 0;
+    release(&log.lock);
+    return 0;
+}
+
+static void
+crash_check(char *stage)
+{
+    int should_crash = 0;
+    int count = 0;
+
+    acquire(&log.lock);
+    if(crashpoint > 0) {
+        crashcount++;
+        count = crashcount;
+        if(crashcount == crashpoint) {
+            should_crash = 1;
+            crashpoint = 0;
+        }
+    }
+    release(&log.lock);
+
+    if(should_crash) {
+        cprintf("crashat: event %d at %s\n", count, stage);
+        panic("crashat: injected crash");
+    }
+  }
+
+
 void
 initlog(int dev)
 {
@@ -62,6 +101,8 @@ initlog(int dev)
   log.start = sb.logstart;
   log.size = sb.nlog;
   log.dev = dev;
+  crashpoint = 0;
+  crashcount = 0;
   recover_from_log();
 }
 
@@ -194,10 +235,14 @@ commit()
 {
   if (log.lh.n > 0) {
     write_log();     // Write modified blocks from cache to log
+    crash_check("before commit header");
     write_head();    // Write header to disk -- the real commit
+    crash_check("after commit header");
     install_trans(); // Now install writes to home locations
+    crash_check("after install_trans");
     log.lh.n = 0;
     write_head();    // Erase the transaction from the log
+    crash_check("after clear header");
   }
 }
 
@@ -230,5 +275,7 @@ log_write(struct buf *b)
     log.lh.n++;
   b->flags |= B_DIRTY; // prevent eviction
   release(&log.lock);
+
+  crash_check("log_write");
 }
 

@@ -20,3 +20,6 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+
+// Reserve 22 for Person 1: SYS_effect.
+#define SYS_crashat 23

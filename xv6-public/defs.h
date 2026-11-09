@@ -86,6 +86,7 @@ void            lapicstartap(uchar, uint);
 void            microdelay(int);
 
 // log.c
+int             crashat_set(int);
 void            initlog(int dev);
 void            log_write(struct buf*);
 void            begin_op();

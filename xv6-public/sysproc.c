@@ -77,6 +77,18 @@ sys_sleep(void)
   return 0;
 }
 
+// Configure a deterministic crash point for filesystem logging.
+int
+sys_crashat(void)
+{
+    int n;
+
+    if(argint(0, &n) < 0 || n < 0) {
+        return -1;
+    }
+    return crashat_set(n);
+}
+
 // return how many clock tick interrupts have occurred
 // since start.
 int
