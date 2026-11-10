@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -10,8 +11,37 @@ class HostedAPIError(RuntimeError):
     """Raised when the hosted model API cannot return a usable tool proposal."""
 
 
+def _load_project_env():
+    """Load supported settings from the repository .env without dependencies."""
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if not env_path.is_file():
+        return
+
+    supported_keys = {"GROQ_API_KEY", "GROQ_MODEL", "GROQ_API_URL"}
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or key not in supported_keys or key in os.environ:
+            continue
+
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif "#" in value:
+            value = value.split("#", 1)[0].rstrip()
+
+        os.environ[key] = value
+
+
 class HostedLLMClient:
     def __init__(self, api_key=None, model=None, endpoint=None, timeout=120.0):
+        _load_project_env()
         self.api_key = api_key or os.environ.get("GROQ_API_KEY")
         self.model = model or os.environ.get(
             "GROQ_MODEL", "openai/gpt-oss-20b"
@@ -26,8 +56,8 @@ class HostedLLMClient:
         """Ask the hosted model for one tool call and return it as {tool, args}."""
         if not self.api_key:
             raise HostedAPIError(
-                "GROQ_API_KEY is not set. Create a Groq API key and export it "
-                "in the environment before running the agent."
+                "GROQ_API_KEY is not set. Add it to the project .env file or "
+                "export it in the environment before running the agent."
             )
 
         payload = {
