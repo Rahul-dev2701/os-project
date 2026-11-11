@@ -16,6 +16,94 @@
 #include "file.h"
 #include "fcntl.h"
 
+
+#define EFFECT_PATH_SIZE 128
+
+// FNV-1a hash over op, path, length and payload.
+static uint
+effect_hash(int op, char *path, int n, char *buf)
+{
+  uint hash = 2166136261U;
+  uint i;
+  uint value;
+
+  // Hash each 32-bit value byte-by-byte (little-endian).
+  value = (uint)op;
+  for(i = 0; i < 4; i++){
+    hash = (hash ^ (value & 0xff)) * 16777619U;
+    value >>= 8;
+  }
+
+  // Include the complete path, including its null terminator.
+  while(*path){
+    hash = (hash ^ (uchar)*path++) * 16777619U;
+  }
+  hash = (hash ^ 0) * 16777619U;
+
+  value = (uint)n;
+  for(i = 0; i < 4; i++){
+    hash = (hash ^ (value & 0xff)) * 16777619U;
+    value >>= 8;
+  }
+
+  for(i = 0; i < (uint)n; i++)
+    hash = (hash ^ (uchar)buf[i]) * 16777619U;
+
+  return hash;
+}
+
+int
+sys_effect(void)
+{
+  int key_low, key_high, op, n, bufaddr;
+  int pathlen;
+  unsigned long long key;
+  char *user_path, *user_buf;
+  char path[EFFECT_PATH_SIZE];
+  char buf[EFFECT_MAX_APPEND];
+  uint request_hash;
+
+  if(argint(0, &key_low) < 0 ||
+     argint(1, &key_high) < 0 ||
+     argint(2, &op) < 0 ||
+     argint(5, &n) < 0 ||
+     argint(4, &bufaddr) < 0)
+    return -1;
+
+  key = ((unsigned long long)(uint)key_high << 32) |
+        (uint)key_low;
+
+  if(key == 0)
+    return -1;
+
+  pathlen = argstr(3, &user_path);
+  if(pathlen <= 0 || pathlen >= EFFECT_PATH_SIZE)
+    return -1;
+
+  memmove(path, user_path, pathlen + 1);
+
+  if(op == EFFECT_OP_CREATE){
+    if(n != 0 || bufaddr != 0)
+      return -1;
+  }
+  else if(op == EFFECT_OP_APPEND){
+    if(n <= 0 || n > EFFECT_MAX_APPEND)
+      return -1;
+    if(argptr(4, &user_buf, n) < 0)
+      return -1;
+    memmove(buf, user_buf, n);
+  }
+  else
+    return -1;
+
+  request_hash = effect_hash(op, path, n, buf);
+
+  if(op == EFFECT_OP_CREATE)
+    return effect_apply(key, op, path, 0, n, request_hash);
+
+  return effect_apply(key, op, path, buf, n, request_hash);
+}
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int

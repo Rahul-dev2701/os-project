@@ -1,7 +1,7 @@
 OBJS = \
-	effect.o\
 	bio.o\
 	console.o\
+	effect.o\
 	exec.o\
 	file.o\
 	fs.o\
@@ -52,7 +52,7 @@ TOOLPREFIX := $(shell if i386-jos-elf-objdump -i 2>&1 | grep '^elf32-i386$$' >/d
 endif
 
 # If the makefile can't find QEMU, specify its path here
-# QEMU = qemu-system-i386
+QEMU = /home/rakshasa/qemu/build/qemu-system-i386
 
 # Try to infer the correct QEMU
 ifndef QEMU
@@ -82,8 +82,6 @@ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 &
 ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
 # FreeBSD ld wants ``elf_i386_fbsd''
 LDFLAGS += -m $(shell $(LD) -V | grep elf_i386 2>/dev/null | head -n 1)
-
-CFLAGS += -mno-sse -mno-sse2 -mno-mmx
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -185,7 +183,11 @@ UPROGS=\
 	_wc\
 	_zombie\
 	_mytest\
-	_crashtest\
+	_effecttest\
+	_effectcrash\
+	_effectconcur\
+	_effectinvalid\
+	_effectcapacity\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
