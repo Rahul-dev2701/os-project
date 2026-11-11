@@ -1,10 +1,11 @@
+
 import socket
 import threading
 import time
 
 
 class QemuBridge:
-    """Restricted tool bridge to a running x86 xv6 guest."""
+    """Restricted TCP serial bridge to a running x86 xv6 guest."""
 
     HOST = "127.0.0.1"
     PORT = 5555
@@ -12,7 +13,6 @@ class QemuBridge:
     MAX_RESPONSE = 65536
     PROMPT = b"$ "
 
-    # Guest paths accepted by this prototype.
     ALLOWED_FILES = {
         "report.txt": "report.txt",
         "important.txt": "important.txt",
@@ -39,14 +39,10 @@ class QemuBridge:
         self.sock.settimeout(self.timeout)
 
         try:
-            # Serial output produced before the TCP connection may
-            # have been lost. Request a fresh shell prompt.
             self.sock.sendall(b"\n")
             output = self._read_until_prompt()
-
             print("[Bridge] Initial guest response:", repr(output))
             self.ready = True
-
         except Exception:
             self.close()
             raise
@@ -103,37 +99,52 @@ class QemuBridge:
         if not self.ready or self.sock is None:
             raise RuntimeError("Bridge is not connected")
 
-        # Commands are constructed internally, never supplied directly
-        # by the agent or user.
         if "\n" in command or "\r" in command:
             raise ValueError("Invalid command")
 
-        self.sock.sendall(command.encode("ascii") + b"\n")
-        output = self._read_until_prompt()
+        try:
+            self.sock.sendall(command.encode("ascii") + b"\n")
+            output = self._read_until_prompt()
 
-        # Remove the echoed command if xv6 echoed it.
-        lines = output.replace("\r", "").splitlines()
+            lines = output.replace("\r", "").splitlines()
 
-        if lines and lines[0].strip() == command:
-            lines = lines[1:]
+            if lines and lines[0].strip() == command:
+                lines = lines[1:]
 
-        return "\n".join(lines).strip()
+            return "\n".join(lines).strip()
 
-    def execute(self, tool, path=None):
+        except (OSError, TimeoutError, RuntimeError):
+            self.close()
+            raise
+
+    def _validate_path(self, path):
+        if not isinstance(path, str):
+            raise ValueError("Path must be a string")
+
+        if "\x00" in path or "\\" in path or ".." in path:
+            raise ValueError("Invalid file path")
+
+        normalized = path.lstrip("/")
+
+        if normalized not in self.ALLOWED_FILES:
+            raise ValueError("File path is not allowed")
+
+        return self.ALLOWED_FILES[normalized]
+
+    def execute(self, tool, path=None, n=None):
         with self.lock:
             if self.sock is None:
                 self.connect()
 
             if tool == "list_files":
-                if path is not None:
-                    raise ValueError("list_files accepts no path")
+                if path is not None or n is not None:
+                    raise ValueError("list_files accepts no arguments")
                 return self._run_fixed_command("ls")
 
             if tool == "read_file":
                 if not isinstance(path, str):
                     raise ValueError("Path must be a string")
 
-                # Accept either "report.txt" or "/report.txt".
                 normalized = path.lstrip("/")
 
                 if normalized not in self.ALLOWED_FILES:
@@ -142,4 +153,51 @@ class QemuBridge:
                 filename = self.ALLOWED_FILES[normalized]
                 return self._run_fixed_command("cat " + filename)
 
+            if tool == "set_crashat":
+                if not isinstance(n, int) or isinstance(n, bool):
+                    raise ValueError("Crash point must be an integer")
+
+                if n < 0 or n > 100000:
+                    raise ValueError("Crash point must be between 0 and 100000")
+
+                command = "crashtest " + str(n)
+
+                self.sock.sendall(command.encode("ascii") + b"\n")
+
+                return self._read_until_prompt_or_panic()
+
             raise ValueError(f"Unsupported tool: {tool}")
+    def _read_until_prompt_or_panic(self):
+        deadline = time.monotonic() + max(self.timeout, 10.0)
+
+        while time.monotonic() < deadline:
+            data = bytes(self.buffer)
+
+            if b"panic:" in data:
+                self.buffer.clear()
+                return data.decode("utf-8", errors="replace")
+
+            index = self.buffer.find(self.PROMPT)
+
+            if index >= 0:
+                output = bytes(self.buffer[:index])
+                del self.buffer[:index + len(self.PROMPT)]
+                return output.decode("utf-8", errors="replace")
+
+            if len(self.buffer) > self.MAX_RESPONSE:
+                raise RuntimeError("Guest response exceeded size limit")
+
+            remaining = deadline - time.monotonic()
+            self.sock.settimeout(max(0.05, remaining))
+
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout:
+                continue
+
+            if not chunk:
+                raise RuntimeError("QEMU closed the serial connection")
+
+            self.buffer.extend(chunk)
+
+        raise TimeoutError("Timed out waiting for crash-test result")
