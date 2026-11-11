@@ -20,10 +20,12 @@ def main():
                 print("[Proposed action]", action)
 
                 result = tools.execute(action)
+                agent.record_result(action, result)
                 print("[Guest result]")
                 print(result)
 
             except (ValueError, RuntimeError, TimeoutError) as exc:
+                agent.record_error(exc)
                 print("[Error]", exc)
 
     finally:

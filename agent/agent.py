@@ -1,131 +1,50 @@
-import shlex
+#Planner that turns a user request into a hosted-model tool proposal.
+
+if __package__:
+    from .hosted_client import HostedLLMClient
+    from .prompts import build_messages, build_tool_definitions
+    from .state import AgentState
+else:  # Support the existing `python main.py` launch from agent/.
+    from hosted_client import HostedLLMClient
+    from prompts import build_messages, build_tool_definitions
+    from state import AgentState
+
 
 class Agent:
+    def __init__(self, client=None, state=None):
+        self.client = client if client is not None else HostedLLMClient()
+        self.state = state if state is not None else AgentState()
+        self.pending_request = None
+        self.pending_action = None
 
-    def __init__(self):
-        self.commands = {
-            "list": self.list_files,
-            "read": self.read_file,
-            "stat": self.stat_file,
-            "exists": self.file_exists,
-            "create": self.create_file,
-            "append": self.append_file,
-            "count": self.count_file,
-            "summarize": self.summarize_file,
-            "retry": self.retry_request,
-            "crashat": self.crash_at
-        }
 
-    def make_action(self, tool, args):
-        return {
-            "tool": tool,
-            "args": args
-        }
-
-    def list_files(self, args):
-        if len(args) != 0:
-            raise ValueError("Usage: list")
-
-        return self.make_action("list_files", {})
-
-    def read_file(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: read <path>")
-
-        return self.make_action("read_file", {
-            "path": args[0]
-        })
-
-    def stat_file(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: stat <path>")
-
-        return self.make_action("stat_file", {
-            "path": args[0]
-        })
-
-    def file_exists(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: exists <path>")
-
-        return self.make_action("file_exists", {
-            "path": args[0]
-        })
-
-    def create_file(self, args):
-        if len(args) < 2:
-            raise ValueError("Usage: create <path> <text>")
-
-        return self.make_action("create_file", {
-            "path": args[0],
-            "text": " ".join(args[1:])
-        })
-
-    def append_file(self, args):
-        if len(args) < 2:
-            raise ValueError("Usage: append <path> <text>")
-
-        return self.make_action("append_file", {
-            "path": args[0],
-            "text": " ".join(args[1:])
-        })
-
-    def count_file(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: count <path>")
-
-        return self.make_action("count_file", {
-            "path": args[0]
-        })
-
-    def summarize_file(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: summarize <path>")
-
-        return self.make_action("summarize_file", {
-            "path": args[0]
-        })
-
-    def retry_request(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: retry <request_id>")
-
-        return self.make_action("retry_request", {
-            "request_id": args[0]
-        })
-
-    def crash_at(self, args):
-        if len(args) != 1:
-            raise ValueError("Usage: crashat <n>")
-
-        try:
-            n = int(args[0])
-        except ValueError:
-            raise ValueError("Crash point must be an integer")
-
-        if n < 0:
-            raise ValueError("Crash point cannot be negative")
-
-        return self.make_action("crashat", {
-            "n": n
-        })
-
+#Ask the model to propose an action for a request.
     def plan(self, request):
-        if not isinstance(request, str):
-            raise ValueError("Request must be a string")
+        self.pending_request = None
+        self.pending_action = None
+        messages = build_messages(request, self.state.planner_context())
+        tool_definitions = build_tool_definitions()
+        self.pending_request = request.strip()
+        action = self.client.propose_action(messages, tool_definitions)
+        self.pending_action = action
+        return action
 
-        try:
-            tokens = shlex.split(request)
-        except ValueError as error:
-            raise ValueError(f"Invalid command syntax: {error}")
+    def record_result(self, action, result):
+        if self.pending_request is None:
+            return
+        self.state.record_turn(self.pending_request, action=action, result=result)
+        self._clear_pending_turn()
 
-        if not tokens:
-            raise ValueError("Empty request")
+    def record_error(self, error):
+        if self.pending_request is None:
+            return
+        self.state.record_turn(
+            self.pending_request,
+            action=self.pending_action,
+            error=error,
+        )
+        self._clear_pending_turn()
 
-        command = tokens[0].lower()
-        args = tokens[1:]
-
-        if command not in self.commands:
-            raise ValueError(f"Unsupported command: {command}")
-
-        return self.commands[command](args)
+    def _clear_pending_turn(self):
+        self.pending_request = None
+        self.pending_action = None
