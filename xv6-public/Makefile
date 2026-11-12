@@ -189,6 +189,7 @@ UPROGS=\
 	_effectconcur\
 	_effectinvalid\
 	_effectcapacity\
+	_effectctl\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
