@@ -190,6 +190,7 @@ UPROGS=\
 	_effectinvalid\
 	_effectcapacity\
 	_effectctl\
+	_crashtest\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
