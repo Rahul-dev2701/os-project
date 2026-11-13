@@ -52,8 +52,8 @@ class HostedLLMClient:
         )
         self.timeout = timeout
 
-    def propose_action(self, messages, tool_definitions):
-        """Ask the hosted model for one tool call and return it as {tool, args}."""
+    def next_step(self, messages, tool_definitions):
+        """Ask for either one tool call or a final text response."""
         if not self.api_key:
             raise HostedAPIError(
                 "GROQ_API_KEY is not set. Add it to the project .env file or "
@@ -64,7 +64,7 @@ class HostedLLMClient:
             "model": self.model,
             "messages": messages,
             "tools": tool_definitions,
-            "tool_choice": "required",
+            "tool_choice": "auto",
             "stream": False,
         }
         request = Request(
@@ -97,9 +97,19 @@ class HostedLLMClient:
             raise HostedAPIError("Hosted model API returned invalid JSON") from exc
 
         try:
-            calls = body["choices"][0]["message"]["tool_calls"]
+            message = body["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise HostedAPIError("Hosted model API did not return a tool call") from exc
+            raise HostedAPIError("Hosted model API returned no assistant message") from exc
+
+        if not isinstance(message, dict):
+            raise HostedAPIError("Hosted model API returned a malformed assistant message")
+        calls = message.get("tool_calls") or []
+
+        if not calls:
+            content = message.get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise HostedAPIError("Hosted model API returned neither a tool call nor text")
+            return {"type": "final", "content": content.strip(), "message": message}
 
         if not isinstance(calls, list) or len(calls) != 1:
             raise HostedAPIError("Planner must propose exactly one tool call")
@@ -122,4 +132,19 @@ class HostedLLMClient:
         if not isinstance(name, str) or not isinstance(arguments, dict):
             raise HostedAPIError("Hosted model API returned a malformed tool call")
 
-        return {"tool": name, "args": arguments}
+        call_id = calls[0].get("id")
+        if not isinstance(call_id, str) or not call_id:
+            raise HostedAPIError("Hosted model API returned a tool call without an id")
+        return {
+            "type": "tool_call",
+            "action": {"tool": name, "args": arguments},
+            "tool_call_id": call_id,
+            "message": message,
+        }
+
+    def propose_action(self, messages, tool_definitions):
+        """Compatibility helper returning one proposed {tool, args} action."""
+        step = self.next_step(messages, tool_definitions)
+        if step["type"] != "tool_call":
+            raise HostedAPIError("Hosted model API returned text instead of a tool call")
+        return step["action"]

@@ -16,13 +16,16 @@ def main():
                 if request.strip().lower() in ("quit", "exit"):
                     break
 
-                action = agent.plan(request)
-                print("[Proposed action]", action)
-
-                result = tools.execute(action)
-                agent.record_result(action, result)
-                print("[Guest result]")
-                print(result)
+                answer, trace = agent.respond(request, tools)
+                for item in trace:
+                    print("[Proposed action]", item["action"])
+                    if item["error"]:
+                        print("[Tool error]", item["result"])
+                    else:
+                        print("[Guest result]")
+                        print(item["result"])
+                print("[Agent response]")
+                print(answer)
 
             except (ValueError, RuntimeError, TimeoutError) as exc:
                 agent.record_error(exc)
